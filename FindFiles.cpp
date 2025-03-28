@@ -12,6 +12,7 @@
 #include <windows.h>
 #include <sstream>
 #include <tchar.h>
+#include <algorithm> // For std::sort
 
 // Function to get the console width
 int getConsoleWidth() {
@@ -53,6 +54,104 @@ struct FileInfo {
         return path == other.path;
     }
 };
+
+// Sort options enum
+enum class SortField {
+    Path,
+    Name,
+    Size,
+    CreationDate,
+    ModificationDate
+};
+
+struct SortOption {
+    SortField field;
+    bool ascending;
+    
+    SortOption(SortField f, bool asc) : field(f), ascending(asc) {}
+};
+
+// Function to parse sort options
+std::vector<SortOption> parseSortOptions(const std::wstring& sortStr) {
+    std::vector<SortOption> options;
+    bool ascending = true;
+    
+    for (wchar_t c : sortStr) {
+        if (c == L'-') {
+            ascending = false;
+            continue;
+        }
+        
+        SortField field;
+        switch (c) {
+            case L'p': field = SortField::Path; break;
+            case L'n': field = SortField::Name; break;
+            case L's': field = SortField::Size; break;
+            case L'c': field = SortField::CreationDate; break;
+            case L'm': field = SortField::ModificationDate; break;
+            default: continue; // Skip unknown characters
+        }
+        
+        options.push_back(SortOption(field, ascending));
+        ascending = true; // Reset for the next field
+    }
+    
+    // If no valid options provided, default to path ascending
+    if (options.empty()) {
+        options.push_back(SortOption(SortField::Path, true));
+    }
+    
+    return options;
+}
+
+// Function to sort files based on sort options
+void sortFiles(std::vector<FileInfo>& files, const std::vector<SortOption>& sortOptions) {
+    std::sort(files.begin(), files.end(), [&sortOptions](const FileInfo& a, const FileInfo& b) {
+        for (const auto& option : sortOptions) {
+            bool result = false;
+            bool equal = false;
+            
+            switch (option.field) {
+                case SortField::Path:
+                    result = a.path < b.path;
+                    equal = a.path == b.path;
+                    break;
+                case SortField::Name: {
+                    // Extract filename from path (after last backslash)
+                    size_t aLastSlash = a.path.find_last_of(L'\\');
+                    size_t bLastSlash = b.path.find_last_of(L'\\');
+                    std::wstring aName = (aLastSlash != std::wstring::npos) ? 
+                                        a.path.substr(aLastSlash + 1) : a.path;
+                    std::wstring bName = (bLastSlash != std::wstring::npos) ? 
+                                        b.path.substr(bLastSlash + 1) : b.path;
+                    result = aName < bName;
+                    equal = aName == bName;
+                    break;
+                }
+                case SortField::Size:
+                    result = a.size < b.size;
+                    equal = a.size == b.size;
+                    break;
+                case SortField::CreationDate:
+                    result = a.creationTime < b.creationTime;
+                    equal = a.creationTime == b.creationTime;
+                    break;
+                case SortField::ModificationDate:
+                    result = a.modificationTime < b.modificationTime;
+                    equal = a.modificationTime == b.modificationTime;
+                    break;
+            }
+            
+            if (!equal) {
+                return option.ascending ? result : !result;
+            }
+            // If equal, continue to next sort option
+        }
+        
+        // If all criteria are equal, default to path
+        return a.path < b.path;
+    });
+}
 
 class FileFinder {
 public:
@@ -450,6 +549,9 @@ void printUsage(const wchar_t* programName) {
     std::cout << "  -t, --tab            Use single tab between columns (better for parsing)" << std::endl;
     std::cout << "  -c, --concise        Display results without headers or summary" << std::endl;
     std::cout << "  -b, --bare           Display only file paths (implies --concise)" << std::endl;
+    std::cout << "  --sort <order>       Sort results by specified criteria" << std::endl;
+    std::cout << "                       p=path, n=name, s=size, c=created date, m=modified date" << std::endl;
+    std::cout << "                       Prefix with - for descending order (e.g., -np for descending name)" << std::endl;
     std::cout << "  -h, --help           Display this help message" << std::endl;
 }
 
@@ -519,6 +621,7 @@ int main(int argc, char* argv[]) {
     bool conciseMode = false;
     bool bareMode = false;
     std::optional<std::wstring> command;
+    std::optional<std::wstring> sortOption;
 
     // Check for help flag
     if (argc < 2 || strEqualsAny(args[1], {L"-h", L"--help", L"/?"})) {
@@ -575,6 +678,9 @@ int main(int argc, char* argv[]) {
         else if (strEqualsAny(args[i], {L"-x", L"--execute"}) && i + 1 < args.size()) {
             command = args[++i];
         }
+        else if (strEqualsAny(args[i], {L"--sort"}) && i + 1 < args.size()) {
+            sortOption = args[++i];
+        }
         else if (args[i][0] == L'-') {
             std::cerr << "Unknown option: ";
             for (wchar_t c : args[i]) {
@@ -627,10 +733,24 @@ int main(int argc, char* argv[]) {
             }
             std::cout << std::endl;
         }
+        
+        if (sortOption) {
+            std::cout << "Sort option: ";
+            for (wchar_t c : *sortOption) {
+                std::cout << (char)c;
+            }
+            std::cout << std::endl;
+        }
     }
     
     // Find files matching the pattern
     std::vector<FileInfo> results = FileFinder::findFiles(directory, pattern, useRegex, shallow, debug);
+    
+    // Sort the results if sorting option is provided
+    if (sortOption) {
+        std::vector<SortOption> sortOptions = parseSortOptions(*sortOption);
+        sortFiles(results, sortOptions);
+    }
     
     // Display results
     if (!conciseMode) {
