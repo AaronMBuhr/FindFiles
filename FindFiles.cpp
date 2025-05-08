@@ -612,7 +612,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Default values
-    std::wstring directory;
+    std::wstring directory; // Must be specified by user
     std::wstring pattern = L"*";
     bool useRegex = false;
     bool shallow = false;
@@ -623,35 +623,19 @@ int main(int argc, char* argv[]) {
     std::optional<std::wstring> command;
     std::optional<std::wstring> sortOption;
 
-    // Check for help flag
-    if (argc < 2 || strEqualsAny(args[1], {L"-h", L"--help", L"/?"})) {
+    // Check for help flag (can be the first argument or appear later)
+    if (argc < 2) { // No arguments other than program name
+        // Let it proceed to positional argument check, which will fail.
+        // Or, print usage if strictly only program name is given.
+        // For now, let the more detailed checks below handle it.
+    } else if (strEqualsAny(args[1], {L"-h", L"--help", L"/?"})) {
         printUsage(args[0].c_str());
         return 0;
     }
 
-    // Parse directory (first non-option argument)
-    bool foundDirectory = false;
-    for (size_t i = 1; i < args.size(); i++) {
-        if (args[i].empty() || args[i][0] != L'-') {
-            directory = args[i];
-            foundDirectory = true;
-            
-            // If next arg exists and is not an option, it's the pattern
-            if (i + 1 < args.size() && !args[i + 1].empty() && args[i + 1][0] != L'-') {
-                pattern = args[i + 1];
-                i++; // Skip the pattern in the next iteration
-            }
-            break;
-        }
-    }
+    std::vector<std::wstring> positionalArgs;
 
-    if (!foundDirectory) {
-        std::cerr << "No directory specified." << std::endl;
-        printUsage(args[0].c_str());
-        return 1;
-    }
-
-    // Parse options
+    // Parse options and collect positional arguments
     for (size_t i = 1; i < args.size(); i++) {
         if (args[i].empty()) continue;
         
@@ -666,7 +650,6 @@ int main(int argc, char* argv[]) {
         }
         else if (strEqualsAny(args[i], {L"-t", L"--tab"})) {
             singleTabMode = true;
-            // Tab mode no longer implies concise mode
         }
         else if (strEqualsAny(args[i], {L"-c", L"--concise"})) {
             conciseMode = true;
@@ -675,13 +658,29 @@ int main(int argc, char* argv[]) {
             bareMode = true;
             conciseMode = true; // Bare mode implies concise mode
         }
-        else if (strEqualsAny(args[i], {L"-x", L"--execute"}) && i + 1 < args.size()) {
-            command = args[++i];
+        else if (strEqualsAny(args[i], {L"-x", L"--execute"})) {
+            if (i + 1 < args.size()) {
+                command = args[++i];
+            } else {
+                std::wcerr << L"Error: Option " << args[i] << L" requires an argument." << std::endl;
+                printUsage(args[0].c_str());
+                return 1;
+            }
         }
-        else if (strEqualsAny(args[i], {L"--sort"}) && i + 1 < args.size()) {
-            sortOption = args[++i];
+        else if (strEqualsAny(args[i], {L"--sort"})) {
+            if (i + 1 < args.size()) {
+                sortOption = args[++i];
+            } else {
+                std::wcerr << L"Error: Option " << args[i] << L" requires an argument." << std::endl;
+                printUsage(args[0].c_str());
+                return 1;
+            }
         }
-        else if (args[i][0] == L'-') {
+        else if (strEqualsAny(args[i], {L"-h", L"--help", L"/?"})) {
+            printUsage(args[0].c_str());
+            return 0;
+        }
+        else if (args[i][0] == L'-') { // Argument starts with '-' but is not a recognized option
             std::cerr << "Unknown option: ";
             for (wchar_t c : args[i]) {
                 std::cerr << (char)c;
@@ -690,6 +689,31 @@ int main(int argc, char* argv[]) {
             printUsage(args[0].c_str());
             return 1;
         }
+        else { // Positional argument
+            positionalArgs.push_back(args[i]);
+        }
+    }
+
+    // Assign positional arguments
+    if (positionalArgs.empty()) {
+        std::cerr << "No directory specified." << std::endl;
+        printUsage(args[0].c_str());
+        return 1;
+    }
+    
+    directory = positionalArgs[0];
+    if (positionalArgs.size() >= 2) {
+        pattern = positionalArgs[1];
+    }
+    // If only one positional arg, 'pattern' remains its default L"*"
+
+    if (positionalArgs.size() > 2) {
+        std::cerr << "Too many positional arguments specified." << std::endl;
+        for(size_t k=2; k < positionalArgs.size(); ++k) {
+            std::wcerr << L"Unexpected argument: " << positionalArgs[k] << std::endl;
+        }
+        printUsage(args[0].c_str());
+        return 1;
     }
 
     // Only show these lines in debug mode
