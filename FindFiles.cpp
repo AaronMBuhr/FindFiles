@@ -368,22 +368,25 @@ bool executeCommand(const std::wstring& commandTemplate, const std::wstring& fil
     // Substitute %d with directory
     size_t pos = 0;
     while ((pos = command.find(L"%d", pos)) != std::wstring::npos) {
-        command.replace(pos, 2, directory);
-        pos += directory.length();
+        std::wstring quotedDirectory = L"\"" + directory + L"\"";
+        command.replace(pos, 2, quotedDirectory);
+        pos += quotedDirectory.length();
     }
     
     // Substitute %n with filename
     pos = 0;
     while ((pos = command.find(L"%n", pos)) != std::wstring::npos) {
-        command.replace(pos, 2, filename);
-        pos += filename.length();
+        std::wstring quotedFilename = L"\"" + filename + L"\"";
+        command.replace(pos, 2, quotedFilename);
+        pos += quotedFilename.length();
     }
     
     // Substitute %f with full path
     pos = 0;
     while ((pos = command.find(L"%f", pos)) != std::wstring::npos) {
-        command.replace(pos, 2, filePath);
-        pos += filePath.length();
+        std::wstring quotedFilePath = L"\"" + filePath + L"\"";
+        command.replace(pos, 2, quotedFilePath);
+        pos += quotedFilePath.length();
     }
     
     // Create process information structures
