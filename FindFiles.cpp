@@ -162,7 +162,8 @@ public:
         const std::wstring& pattern,
         bool useRegex = false,
         bool shallow = false,
-        bool debug = false
+        bool debug = false,
+        bool pathMatch = false
     ) {
         std::vector<FileInfo> results;
         std::wregex regexPattern;
@@ -178,7 +179,7 @@ public:
                 regexPattern = std::wregex(pattern, std::regex_constants::icase);
             } else {
                 // Convert DOS wildcard to regex
-                std::wstring regexStr = dosPatternToRegex(pattern);
+                std::wstring regexStr = dosPatternToRegex(pattern, pathMatch);
                 regexPattern = std::wregex(regexStr, std::regex_constants::icase);
             }
         }
@@ -245,13 +246,13 @@ public:
             if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                 // Process subdirectories if not in shallow mode
                 if (!shallow) {
-                    std::vector<FileInfo> subDirResults = findFiles(fullPath, pattern, useRegex, shallow, debug);
+                    std::vector<FileInfo> subDirResults = findFiles(fullPath, pattern, useRegex, shallow, debug, pathMatch);
                     results.insert(results.end(), subDirResults.begin(), subDirResults.end());
                 }
             } else {
                 // Process regular file if it matches the pattern
-                std::wstring filename = findData.cFileName;
-                if (std::regex_match(filename, regexPattern)) {
+                std::wstring stringToMatch = pathMatch ? fullPath : findData.cFileName;
+                if (std::regex_search(stringToMatch, regexPattern)) {
                     FileInfo info;
                     info.path = fullPath;
                     
@@ -299,7 +300,7 @@ public:
     }
 
 private:
-    static std::wstring dosPatternToRegex(const std::wstring& pattern) {
+    static std::wstring dosPatternToRegex(const std::wstring& pattern, bool pathMatch = false) {
         std::wstring result = pattern;
         // Escape special regex characters
         for (size_t i = 0; i < result.length(); ++i) {
@@ -322,6 +323,9 @@ private:
         while ((pos = result.find(L"\\?", pos)) != std::wstring::npos) {
             result.replace(pos, 2, L".");
             pos += 1;
+        }
+        if (pathMatch) {
+            return result;
         }
         return L"^" + result + L"$";
     }
@@ -542,6 +546,7 @@ void printUsage(const wchar_t* programName) {
     std::wcout << L"  -t, --tab            Use single tab between columns (better for parsing)" << std::endl;
     std::wcout << L"  -c, --concise        Display results without headers or summary" << std::endl;
     std::wcout << L"  -b, --bare           Display only file paths (implies --concise)" << std::endl;
+    std::wcout << L"  -P, --path-match     Match pattern against full path instead of filename" << std::endl;
     std::wcout << L"  --sort <order>       Sort results by specified criteria" << std::endl;
     std::wcout << L"                       p=path, n=name, s=size, c=created date, m=modified date" << std::endl;
     std::wcout << L"                       Prefix a field character with '-' for descending order (e.g., -n for" << std::endl;
@@ -583,6 +588,7 @@ int wmain(int argc, wchar_t* argv[]) { // Changed to wmain and wchar_t*
     bool singleTabMode = false;
     bool conciseMode = false;
     bool bareMode = false;
+    bool pathMatchMode = false;
     std::optional<std::wstring> command;
     std::optional<std::wstring> sortOption;
     bool dryRunMode = false;
@@ -620,6 +626,9 @@ int wmain(int argc, wchar_t* argv[]) { // Changed to wmain and wchar_t*
         else if (strEqualsAny(args[i], {L"-b", L"--bare"})) {
             bareMode = true;
             conciseMode = true; // Bare mode implies concise mode
+        }
+        else if (strEqualsAny(args[i], {L"-P", L"--path-match"})) {
+            pathMatchMode = true;
         }
         else if (strEqualsAny(args[i], {L"--dry-run"})) {
             dryRunMode = true;
@@ -708,6 +717,10 @@ int wmain(int argc, wchar_t* argv[]) { // Changed to wmain and wchar_t*
             std::wcout << L"Using bare display mode" << std::endl;
         }
         
+        if (pathMatchMode) {
+            std::wcout << L"Matching pattern against full path" << std::endl;
+        }
+        
         if (dryRunMode) {
             std::wcout << L"Using dry-run mode" << std::endl;
         }
@@ -722,7 +735,7 @@ int wmain(int argc, wchar_t* argv[]) { // Changed to wmain and wchar_t*
     }
     
     // Find files matching the pattern
-    std::vector<FileInfo> results = FileFinder::findFiles(directory, pattern, useRegex, shallow, debug);
+    std::vector<FileInfo> results = FileFinder::findFiles(directory, pattern, useRegex, shallow, debug, pathMatchMode);
     
     // Sort the results if sorting option is provided
     if (sortOption) {
