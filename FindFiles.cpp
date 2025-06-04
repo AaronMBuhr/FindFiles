@@ -38,13 +38,19 @@ void printColumnHeaders(bool singleTabMode = false,
 // Function to get the console width
 int getConsoleWidth() {
     CONSOLE_SCREEN_BUFFER_INFO csbi;
-    int consoleWidth = 79; // Default fallback width
+    int consoleWidth = 120; // Default fallback width for redirected output
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (hConsole != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(hConsole, &csbi)) {
-        consoleWidth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-        consoleWidth -= 1; // Avoid automatic line wrapping
-        if (consoleWidth < 50) consoleWidth = 50;
+    
+    // Check if output is actually going to a console (not a file or pipe)
+    if (hConsole != INVALID_HANDLE_VALUE && GetFileType(hConsole) == FILE_TYPE_CHAR) {
+        if (GetConsoleScreenBufferInfo(hConsole, &csbi)) {
+            consoleWidth = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+            consoleWidth -= 1; // Avoid automatic line wrapping
+            if (consoleWidth < 50) consoleWidth = 50;
+        }
     }
+    // If output is redirected (file, pipe, etc.), use the default width
+    
     return consoleWidth;
 }
 
@@ -158,6 +164,7 @@ std::optional<std::chrono::system_clock::time_point> parseDateTime(const std::ws
             timeinfo.tm_year = std::stoi(match[1].str()) - 1900;
             timeinfo.tm_mon = std::stoi(match[2].str()) - 1;
             timeinfo.tm_mday = std::stoi(match[3].str());
+            timeinfo.tm_isdst = -1; // Let system determine DST
             if (i == 1 || i == 4) { // YYYYMMDDHHMM or YYYY/MM/DD-HH:MM
                 timeinfo.tm_hour = std::stoi(match[4].str());
                 timeinfo.tm_min = std::stoi(match[5].str());
@@ -166,7 +173,7 @@ std::optional<std::chrono::system_clock::time_point> parseDateTime(const std::ws
                 timeinfo.tm_min = std::stoi(match[5].str());
                 timeinfo.tm_sec = std::stoi(match[6].str());
             }
-            time_t tt = mktime(&timeinfo);
+            time_t tt = _mkgmtime(&timeinfo);
             if (tt == -1) return std::nullopt;
             return std::chrono::system_clock::from_time_t(tt);
         }
@@ -287,10 +294,24 @@ public:
                     FileTimeToSystemTime(&ftCreate, &stCreate);
                     FileTimeToSystemTime(&ftWrite, &stWrite);
 
-                    tm tmCreate = {stCreate.wSecond, stCreate.wMinute, stCreate.wHour, stCreate.wDay, stCreate.wMonth - 1, stCreate.wYear - 1900};
+                    tm tmCreate = {};
+                    tmCreate.tm_sec = stCreate.wSecond;
+                    tmCreate.tm_min = stCreate.wMinute;
+                    tmCreate.tm_hour = stCreate.wHour;
+                    tmCreate.tm_mday = stCreate.wDay;
+                    tmCreate.tm_mon = stCreate.wMonth - 1;
+                    tmCreate.tm_year = stCreate.wYear - 1900;
+                    tmCreate.tm_isdst = -1;
                     info.creationTime = std::chrono::system_clock::from_time_t(_mkgmtime(&tmCreate));
                     
-                    tm tmWrite = {stWrite.wSecond, stWrite.wMinute, stWrite.wHour, stWrite.wDay, stWrite.wMonth - 1, stWrite.wYear - 1900};
+                    tm tmWrite = {};
+                    tmWrite.tm_sec = stWrite.wSecond;
+                    tmWrite.tm_min = stWrite.wMinute;
+                    tmWrite.tm_hour = stWrite.wHour;
+                    tmWrite.tm_mday = stWrite.wDay;
+                    tmWrite.tm_mon = stWrite.wMonth - 1;
+                    tmWrite.tm_year = stWrite.wYear - 1900;
+                    tmWrite.tm_isdst = -1;
                     info.modificationTime = std::chrono::system_clock::from_time_t(_mkgmtime(&tmWrite));
 
                     ULARGE_INTEGER fileSize;
@@ -533,6 +554,7 @@ void printUsage(const wchar_t* programName) {
     std::wcout << L"                       headers with files listed below. In concise mode, splits" << std::endl;
     std::wcout << L"                       path into separate directory and filename columns." << std::endl;
     std::wcout << L"  -P, --path-match     Match pattern against full path instead of filename" << std::endl;
+    std::wcout << L"  -8, --utf8           Output in UTF-8 encoding (default is UTF-16 for Unicode preservation)" << std::endl;
     std::wcout << L"  --sort <order>       Sort results by specified criteria" << std::endl;
     std::wcout << L"                       p=path, n=name, s=size, c=created date, m=modified date" << std::endl;
     std::wcout << L"                       Prefix a field character with '-' for descending order (e.g., -n)." << std::endl;
@@ -546,9 +568,6 @@ void printUsage(const wchar_t* programName) {
 } 
 
 int main(int /*argc_c*/, char* /*argv_c*/[]) {
-    _setmode(_fileno(stdout), _O_U16TEXT);
-    _setmode(_fileno(stderr), _O_U16TEXT);
-
     int argc_w;
     LPWSTR* argv_w = CommandLineToArgvW(GetCommandLineW(), &argc_w);
     if (!argv_w) {
@@ -559,6 +578,26 @@ int main(int /*argc_c*/, char* /*argv_c*/[]) {
     std::vector<std::wstring> args;
     for (int i = 0; i < argc_w; i++) {
         args.push_back(argv_w[i]);
+    }
+
+    // Check for UTF-8 flag early
+    bool useUtf8Output = false;
+    for (size_t i = 1; i < args.size(); i++) {
+        if (args[i] == L"-8" || args[i] == L"--utf8") {
+            useUtf8Output = true;
+            break;
+        }
+    }
+
+    // Set output mode based on flag
+    if (useUtf8Output) {
+        SetConsoleOutputCP(CP_UTF8);
+        _setmode(_fileno(stdout), _O_U8TEXT);
+        _setmode(_fileno(stderr), _O_U8TEXT);
+    } else {
+        // Default: preserve Unicode with UTF-16
+        _setmode(_fileno(stdout), _O_U16TEXT);
+        _setmode(_fileno(stderr), _O_U16TEXT);
     }
 
     std::wstring directory;
@@ -592,6 +631,7 @@ int main(int /*argc_c*/, char* /*argv_c*/[]) {
         else if (strEqualsAny(arg, {L"-v", L"--verbose"})) verboseMode = true;
         else if (strEqualsAny(arg, {L"-P", L"--path-match"})) pathMatchMode = true;
         else if (strEqualsAny(arg, {L"--dry-run"})) dryRunMode = true;
+        else if (strEqualsAny(arg, {L"-8", L"--utf8"})) { /* already processed early */ }
         else if (strEqualsAny(arg, {L"-x", L"--execute"})) {
             if (++i < args.size()) command = args[i];
             else { std::wcerr << L"Error: --execute requires an argument." << std::endl; LocalFree(argv_w); return 1; }
